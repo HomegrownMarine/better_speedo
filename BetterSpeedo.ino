@@ -1,16 +1,23 @@
+// Airmar thermister coefficients
+#define A 0.0011321253
+#define B 0.000233722
+#define C 0.0000000886
 
+//pulse factor for ST300 with fins.  converts pulse time into milli-knots
 #define PULSE_FACTOR 250000000        // 1000000 / 4 pulses per knot
 
-elapsedMicros last_tick;
-elapsedMillis ten_hz;
-
-
+//buffer for samples from speedo - 16 pulses per 1/5 second at 20 knots
 #define SAMPLE_BUFFER_SIZE 16
 volatile unsigned int sample_buffer[SAMPLE_BUFFER_SIZE];
 volatile int write_pos = 0;
-volatile int broadcast_pos = 0;
+int broadcast_pos = 0;
 
+//last speed for calculating acceleration
 unsigned int last_speed = 0;
+
+elapsedMicros last_tick;
+elapsedMillis five_hz_time;
+elapsedMillis one_hz_time;
 
 void setup() {
     //initialize sample buffer
@@ -25,12 +32,14 @@ void setup() {
     pinMode(12, INPUT);
     attachInterrupt(12, on_speedo_pulse, FALLING);
 
-    
-    Serial.begin(38400);
+    SPI.begin(8);
+    // Serial.begin(38400);
 }
 
 void loop() {
 
+    //for debugging purposes, we're going to send all pulse 
+    //lengths to the mux.
     while( broadcast_pos != write_pos ) {
         Serial.print("$SPP,");
         Serial.print(sample_buffer[broadcast_pos]);
@@ -39,8 +48,9 @@ void loop() {
         broadcast_pos=(broadcast_pos+1)%SAMPLE_BUFFER_SIZE;
     }
 
-    if ( ten_hz >= 200 ) {
-        ten_hz = 0;
+    //5Hz, broadcast speed and acceleration 
+    if ( five_hz_time >= 200 ) {
+        five_hz_time = 0;
 
         //calculate time 
         //use a variable width window to average the observed
@@ -70,8 +80,15 @@ void loop() {
         Serial.print((speed_in_hundredths-last_speed)/100.0);
         Serial.print("\r\n");
         last_speed = speed_in_hundredths;
+    }
 
-        //TODO temp
+    if ( one_hz_time >= 1000 ) {
+        double voltage_read = analogRead(0)*(3.3/1023); 
+        double lnr =  log(33000.0 / voltage_read − 10000.0); //get resistence of thermister
+        double t = (1 / (A + (B * lnr) + (C * lnr * lnr * lnr))) - 273.15;
+        Serial.print("$SPMTW,");
+        Serial.print(t, 1);
+        Serial.print(",C*\r\n");
     }
 
     //handle no signal for a while.
