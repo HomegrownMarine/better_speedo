@@ -32,20 +32,34 @@ void setup() {
     pinMode(12, INPUT);
     attachInterrupt(12, on_speedo_pulse, FALLING);
 
-    SPI.begin(8);
-    // Serial.begin(38400);
+    //thermister input pin
+    pinMode(8, INPUT);
+
+    //
+    SPI.begin();
 }
 
 void loop() {
 
     //for debugging purposes, we're going to send all pulse 
     //lengths to the mux.
-    while( broadcast_pos != write_pos ) {
-        Serial.print("$SPP,");
-        Serial.print(sample_buffer[broadcast_pos]);
-        Serial.print("*\r\n");
+    if ( broadcast_pos != write_pos ) {
+        digitalWrite(SS, LOW);
+                  
+        while( broadcast_pos != write_pos ) {
+            SPI.transfer('P');
 
-        broadcast_pos=(broadcast_pos+1)%SAMPLE_BUFFER_SIZE;
+            //send 4 byte integer
+            SPI.transfer(c & 0xFF);
+            SPI.transfer((c>>8)& 0xFF;
+            SPI.transfer((c>>16)& 0xFF;
+            SPI.transfer((c>>24)& 0xFF);
+
+            broadcast_pos=(broadcast_pos+1)%SAMPLE_BUFFER_SIZE;
+        }
+    
+        // disable Slave Select
+        digitalWrite(SS, HIGH);
     }
 
     //5Hz, broadcast speed and acceleration 
@@ -67,28 +81,50 @@ void loop() {
         //divide by # of samples and by 10 to turn milli knots into
         //centi-knots
         unsigned int speed_in_hundredths = sample_sum / (samples*10);
+        int acceleration = speed_in_hundredths-last_speed;
+        last_speed = speed_in_hundredths;
 
-        //TODO: send over spi
-        //broadcast speed
-        Serial.print("$SPVHW,,,,,");
-        Serial.print(speed_in_hundredths/100.0); //TODO
-        Serial.print(",N,,*");
-        Serial.print("\r\n");
+
+        digitalWrite(SS, LOW);
+
+        //broadcast speed and acceleration
+        SPI.transfer('S');
+
+        //send 4 byte integer
+        SPI.transfer(speed_in_hundredths & 0xFF);
+        SPI.transfer((speed_in_hundredths>>8)& 0xFF;
+        SPI.transfer((speed_in_hundredths>>16)& 0xFF;
+        SPI.transfer((speed_in_hundredths>>24)& 0xFF);
 
         //acceleration
-        Serial.print("$SPA,");
-        Serial.print((speed_in_hundredths-last_speed)/100.0);
-        Serial.print("\r\n");
-        last_speed = speed_in_hundredths;
+        SPI.transfer('A');
+
+        //send 4 byte integer
+        SPI.transfer(acceleration & 0xFF);
+        SPI.transfer((acceleration>>8)& 0xFF;
+        SPI.transfer((acceleration>>16)& 0xFF;
+        SPI.transfer((acceleration>>24)& 0xFF);
+        
+        digitalWrite(SS, HIGH);
     }
 
     if ( one_hz_time >= 1000 ) {
         double voltage_read = analogRead(0)*(3.3/1023); 
         double lnr =  log(33000.0 / voltage_read − 10000.0); //get resistence of thermister
-        double t = (1 / (A + (B * lnr) + (C * lnr * lnr * lnr))) - 273.15;
-        Serial.print("$SPMTW,");
-        Serial.print(t, 1);
-        Serial.print(",C*\r\n");
+        int t = (int) (100 / (A + (B * lnr) + (C * lnr * lnr * lnr)) - 27315);
+        
+        digitalWrite(SS, LOW);
+        
+        //time
+        SPI.transfer('T');
+
+        //send 4 byte integer
+        SPI.transfer(t & 0xFF);
+        SPI.transfer((t>>8)& 0xFF;
+        SPI.transfer((t>>16)& 0xFF;
+        SPI.transfer((t>>24)& 0xFF);
+        
+        digitalWrite(SS, HIGH);
     }
 
     //handle no signal for a while.
