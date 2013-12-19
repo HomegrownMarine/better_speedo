@@ -1,3 +1,10 @@
+
+//#include <Wire.h>
+
+#define SPEEDO_PIN 2
+#define SPEEDO_INTERRUPT 2
+#define TEMP_PIN 0
+
 // Airmar thermister coefficients
 #define A 0.0011321253
 #define B 0.000233722
@@ -19,63 +26,76 @@ elapsedMicros last_tick;
 elapsedMillis five_hz_time;
 elapsedMillis one_hz_time;
 
+elapsedMillis debug_tome;
+
 void setup() {
     //initialize sample buffer
     for (int i=0; i < SAMPLE_BUFFER_SIZE; i++ ) {
         sample_buffer[i] = 0;    
     }
     
+    //TODO: don't broadcast if no depth connected
+
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, HIGH);
 
     //speedo input pin
-    pinMode(12, INPUT);
-    attachInterrupt(12, on_speedo_pulse, FALLING);
+    pinMode(SPEEDO_PIN, INPUT);
+    attachInterrupt(SPEEDO_INTERRUPT, on_speedo_pulse, RISING);
 
-    //thermister input pin
-    pinMode(8, INPUT);
+//    Wire.begin();
+    Serial.begin(38400);
+}
 
-    //
-    SPI.begin();
+#define DEBUG(x) Serial.println(x);
+
+void send_data(char key, unsigned int value) {
+    // Wire.beginTransmission(6);
+
+    // Wire.wire('P');
+
+    // //send 4 byte integer
+    // Wire.wire(c & 0xFF);
+    // Wire.wire((c>>8)& 0xFF;
+    // Wire.wire((c>>16)& 0xFF;
+    // Wire.wire((c>>24)& 0xFF);
+
+    // // disable Slave Select        
+    // Wire.endTransmission();
+
+    Serial.print(key);
+    Serial.print(" : ");
+    Serial.print(value);
+    Serial.print("\r\n");
 }
 
 void loop() {
 
     //for debugging purposes, we're going to send all pulse 
     //lengths to the mux.
-    if ( broadcast_pos != write_pos ) {
-        digitalWrite(SS, LOW);
-                  
-        while( broadcast_pos != write_pos ) {
-            SPI.transfer('P');
+    int current_write_pos = write_pos;
+    while( broadcast_pos != write_pos ) {            
+        send_data('P', sample_buffer[broadcast_pos]);
 
-            //send 4 byte integer
-            SPI.transfer(c & 0xFF);
-            SPI.transfer((c>>8)& 0xFF;
-            SPI.transfer((c>>16)& 0xFF;
-            SPI.transfer((c>>24)& 0xFF);
-
-            broadcast_pos=(broadcast_pos+1)%SAMPLE_BUFFER_SIZE;
-        }
-    
-        // disable Slave Select
-        digitalWrite(SS, HIGH);
+        broadcast_pos=(broadcast_pos+1)%SAMPLE_BUFFER_SIZE;
     }
 
     //5Hz, broadcast speed and acceleration 
-    if ( five_hz_time >= 200 ) {
+    if ( five_hz_time >= 2000 ) {
         five_hz_time = 0;
 
         //calculate time 
         //use a variable width window to average the observed
-        int last_sample_index = (write_pos-1)%SAMPLE_BUFFER_SIZE;
-        int samples = sample_buffer[last_sample_index] / 625;      //sample size factor, tries to read about .4 seconds worth of samples
+        int last_sample_pos = (current_write_pos-1+SAMPLE_BUFFER_SIZE)%SAMPLE_BUFFER_SIZE;
+        int samples = sample_buffer[last_sample_pos] / 625;      //sample size factor, tries to read about .4 seconds worth of samples
         if (samples < 3) samples = 3;
         if (samples > SAMPLE_BUFFER_SIZE) samples = SAMPLE_BUFFER_SIZE;
 
-        int sample_sum = 0;
-        for ( int i=0, int c = last_sample_index; i < samples; i++, c = (c-1)%SAMPLE_BUFFER_SIZE ) {
-            sample_sum += sample_buffer[c];
+        
+        int i = (last_sample_pos-samples+SAMPLE_BUFFER_SIZE)%SAMPLE_BUFFER_SIZE;
+        unsigned int sample_sum = 0;
+        for ( ; i != current_write_pos; i=(i+1)%SAMPLE_BUFFER_SIZE ) {
+            sample_sum += sample_buffer[i];
         }
         
         //divide by # of samples and by 10 to turn milli knots into
@@ -85,54 +105,28 @@ void loop() {
         last_speed = speed_in_hundredths;
 
 
-        digitalWrite(SS, LOW);
-
         //broadcast speed and acceleration
-        SPI.transfer('S');
-
-        //send 4 byte integer
-        SPI.transfer(speed_in_hundredths & 0xFF);
-        SPI.transfer((speed_in_hundredths>>8)& 0xFF;
-        SPI.transfer((speed_in_hundredths>>16)& 0xFF;
-        SPI.transfer((speed_in_hundredths>>24)& 0xFF);
-
-        //acceleration
-        SPI.transfer('A');
-
-        //send 4 byte integer
-        SPI.transfer(acceleration & 0xFF);
-        SPI.transfer((acceleration>>8)& 0xFF;
-        SPI.transfer((acceleration>>16)& 0xFF;
-        SPI.transfer((acceleration>>24)& 0xFF);
-        
-        digitalWrite(SS, HIGH);
+        send_data('S', speed_in_hundredths);
+        send_data('A', acceleration);
     }
 
-    if ( one_hz_time >= 1000 ) {
-        double voltage_read = analogRead(0)*(3.3/1023); 
-        double lnr =  log(33000.0 / voltage_read − 10000.0); //get resistence of thermister
+    if ( one_hz_time >= 2000 ) {
+        one_hz_time = 0;
+      
+        double voltage_read = analogRead(TEMP_PIN)*(3.3/1023); 
+        double lnr =  log( (33000.0 / voltage_read) - 10000.0 ); //get resistence of thermister
         int t = (int) (100 / (A + (B * lnr) + (C * lnr * lnr * lnr)) - 27315);
         
-        digitalWrite(SS, LOW);
-        
-        //time
-        SPI.transfer('T');
-
-        //send 4 byte integer
-        SPI.transfer(t & 0xFF);
-        SPI.transfer((t>>8)& 0xFF;
-        SPI.transfer((t>>16)& 0xFF;
-        SPI.transfer((t>>24)& 0xFF);
-        
-        digitalWrite(SS, HIGH);
+        send_data('T', t);
     }
 
     //handle no signal for a while.
-    //1s is ~.3 kts
+    //1s is ~.3 kts -- just go to zero
     if ( last_tick > 1000000 ) {
         sample_buffer[write_pos] = 0;
         write_pos=(write_pos+1)%SAMPLE_BUFFER_SIZE;
         last_tick = 0;
+        Serial.println("too long");
     }
 }
 
@@ -140,5 +134,6 @@ void on_speedo_pulse() {
     unsigned int milliKnots = (PULSE_FACTOR/last_tick);
     sample_buffer[write_pos] = milliKnots;
     write_pos=(write_pos+1)%SAMPLE_BUFFER_SIZE;
+    
     last_tick = 0;
 }
