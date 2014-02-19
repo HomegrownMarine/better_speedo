@@ -81,8 +81,8 @@ public:
         unsigned int sample_dividor = 0;
 
         for ( int i=0; i < samples; i++ ) {
-            sample_sum += (3*samples-i) * sample_buffer[last_sample_pos];
-            sample_dividor += (3*samples-i);
+            sample_sum += (2*samples-i) * sample_buffer[last_sample_pos];
+            sample_dividor += (2*samples-i);
 
             last_sample_pos = (last_sample_pos-1+SPEEDO_SAMPLE_BUFFER_SIZE)%SPEEDO_SAMPLE_BUFFER_SIZE;
         }
