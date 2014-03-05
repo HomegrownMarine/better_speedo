@@ -2,9 +2,11 @@
 #define _Speedo_h
 
 #include "Arduino.h"
+#include "elapsedMillis.h"
 
-//pulse factor for ST300 with fins.  converts pulse time into milli-knots
-#define PULSE_FACTOR (100000000lu/47)        // 100,000,000 / 4.7 pulses per knot
+//pulse factor for ST300 with fins.  converts pulse time in microseconds into centi-knots 
+#define PULSE_FACTOR ((100 * 1000000)/4)        // 100 (hundreths of a knot) * 1000000 microseconds/s / 4 pulses/s
+#define CALIBRATION_FACTOR 1.23
 
 //buffer for samples from speedo - 16 pulses per 1/5 second at 20 knots
 #define SPEEDO_SAMPLE_BUFFER_SIZE 48
@@ -23,9 +25,10 @@ class Speedo {
 protected:
     volatile unsigned int sample_buffer[SPEEDO_SAMPLE_BUFFER_SIZE];
     volatile int write_pos;
-    int broadcast_pos;
     volatile unsigned long last_tick;
 
+    int broadcast_pos;
+    
 public:
 
     Speedo() {
@@ -39,7 +42,7 @@ public:
 
     void tick() {
         unsigned long t = micros();
-        unsigned int milliKnots = (PULSE_FACTOR / (t - last_tick) );
+        unsigned int milliKnots = (long(PULSE_FACTOR*CALIBRATION_FACTOR) / (t - last_tick) );
 
         last_tick = t;
 
@@ -58,8 +61,7 @@ public:
         //for debugging purposes, we're going to send all pulse 
         //lengths to the mux.
         while( broadcast_pos != current_write_pos ) {
-            Serial.print('P');
-            Serial.print(' ');
+            Serial.print("$P,");
             Serial.println(sample_buffer[broadcast_pos]);
 
             broadcast_pos=(broadcast_pos+1)%SPEEDO_SAMPLE_BUFFER_SIZE;
@@ -70,11 +72,11 @@ public:
         //make a non-volitile copy of the write_pos
         int current_write_pos = write_pos;
 
-        //calculate time 
+        //calculate speed 
         //use a variable width window to average the observed pulses
         int last_sample_pos = (current_write_pos-1+SPEEDO_SAMPLE_BUFFER_SIZE)%SPEEDO_SAMPLE_BUFFER_SIZE;
         int samples = sample_buffer[last_sample_pos] * 4 / 100;      //sample size factor, tries to read about 1 second worth of samples
-        if (samples < 3) samples = 3;
+        if (samples < 3) samples = 3;     //minimum of 3 samples
         if (samples > SPEEDO_SAMPLE_BUFFER_SIZE) samples = SPEEDO_SAMPLE_BUFFER_SIZE;
 
         unsigned long sample_sum = 0;
@@ -87,21 +89,20 @@ public:
             last_sample_pos = (last_sample_pos-1+SPEEDO_SAMPLE_BUFFER_SIZE)%SPEEDO_SAMPLE_BUFFER_SIZE;
         }
         
-        //divide by # of samples and by 10 to turn milli knots into
-        //centi-knots
+        //divide by total weight of all samples
         unsigned int speed_in_hundredths = sample_sum / (sample_dividor);
         
-        // int acceleration = speed_in_hundredths-last_speed;
-        // last_speed = speed_in_hundredths;
         return speed_in_hundredths;
     }
 
     void reset() {
-        //handle no signal for a while.
-        //1 s is ~.3 kts -- just go to zero
+        //make a non-volitile copy of the last_tick
         unsigned long old_last_tick = last_tick;
         unsigned long t = micros();
-        if ( (t-old_last_tick) > 1000000 /*&& 2147483647 > (now-last_tick)*/ ) {
+
+        //handle no signal for a while.
+        //1 s is ~.3 kts -- just go to zero
+        if ( (t-old_last_tick) > 1000000 ) {
             update(0);
             last_tick = t;
         }
